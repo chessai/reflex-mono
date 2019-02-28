@@ -23,7 +23,7 @@ import Control.Monad.Identity
 import Control.Monad.Reader
 import qualified Control.Monad.State.Lazy as Lazy
 import Control.Monad.State.Strict
-import Reflex.Class
+import Reflex
 
 -- | A 'Requester' action can trigger requests of type @Request m a@ based on
 -- 'Event's, and receive responses of type @Response m a@ in return.  Note that
@@ -31,16 +31,16 @@ import Reflex.Class
 -- given request.  For example, if @Request m@ is 'IO' and @Response m@ is
 -- 'Identity', then 'requestingIdentity' has the same type as
 -- 'Reflex.PerformEvent.Class.performEvent'.
-class (Reflex t, Monad m) => Requester t m | m -> t where
+class (Monad m) => Requester t m | m -> t where
   -- | The type of requests that this 'Requester' can emit
   type Request m :: * -> *
   -- | The type of responses that this 'Requester' can receive
   type Response m :: * -> *
   -- | Emit a request whenever the given 'Event' fires, and return responses in
   -- the resulting 'Event'.
-  requesting :: Event t (Request m a) -> m (Event t (Response m a))
+  requesting :: Event (Request m a) -> m (Event (Response m a))
   -- | Emit a request whenever the given 'Event' fires, and ignore all responses.
-  requesting_ :: Event t (Request m a) -> m ()
+  requesting_ :: Event (Request m a) -> m ()
 
 
 instance Requester t m => Requester t (ReaderT r m) where
@@ -63,10 +63,10 @@ instance Requester t m => Requester t (Lazy.StateT s m) where
 
 -- | Emit a request whenever the given 'Event' fires, and unwrap the responses
 -- before returning them.  @Response m@ must be 'Identity'.
-requestingIdentity :: (Requester t m, Response m ~ Identity) => Event t (Request m a) -> m (Event t a)
+requestingIdentity :: (Requester t m, Response m ~ Identity) => Event (Request m a) -> m (Event a)
 requestingIdentity = fmap coerceEvent . requesting
 
-withRequesting :: (Requester t m, MonadFix m) => (Event t (Response m a) -> m (Event t (Request m a), r)) -> m r
+withRequesting :: (Requester t m, MonadFix m) => (Event (Response m a) -> m (Event (Request m a), r)) -> m r
 withRequesting f = do
   rec response <- requesting request
       (request, result) <- f response

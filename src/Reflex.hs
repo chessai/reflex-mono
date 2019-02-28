@@ -102,6 +102,7 @@ module Reflex
   , tag
   , tagMaybe
   , attach
+  , attachWith
   , attachWithMaybe
 
     -- ** Blocking an 'Event' based on a 'Behavior'
@@ -201,6 +202,9 @@ module Reflex
   , MonadHold(..)
   , fmapCheap
   , ffor
+  , fforCheap
+  , fforMaybeCheap
+  , fmapMaybeCheap
   ) where
 
 import Control.Applicative (liftA2)
@@ -3482,3 +3486,10 @@ newtype PostBuildT m a = PostBuildT { unPostBuildT :: ReaderT (Event ()) m a }
 runPostBuildT :: PostBuildT m a -> Event () -> m a
 runPostBuildT (PostBuildT a) = runReaderT a
 
+{-# INLINE fmapMaybeCheap #-}
+fmapMaybeCheap :: (a -> Maybe b) -> Event a -> Event b
+fmapMaybeCheap f = pushCheap $ return . f
+
+{-# INLINE fforMaybeCheap #-}
+fforMaybeCheap :: Event a -> (a -> Maybe b) -> Event b
+fforMaybeCheap = flip fmapMaybeCheap

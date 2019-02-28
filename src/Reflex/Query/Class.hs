@@ -29,8 +29,9 @@ import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MonoidalMap
 import Data.Semigroup
 import Foreign.Storable
+import Reflex.Patch
 
-import Reflex.Class
+import Reflex
 
 class (Monoid (QueryResult a), Semigroup (QueryResult a)) => Query a where
   type QueryResult a :: *
@@ -81,19 +82,19 @@ combineSelectedCounts :: SelectedCount -> SelectedCount -> Maybe SelectedCount
 combineSelectedCounts (SelectedCount i) (SelectedCount j) = if i == negate j then Nothing else Just $ SelectedCount (i + j)
 
 class (Group q, Additive q, Query q) => MonadQuery t q m | m -> q t where
-  tellQueryIncremental :: Incremental t (AdditivePatch q) -> m ()
-  askQueryResult :: m (Dynamic t (QueryResult q))
-  queryIncremental :: Incremental t (AdditivePatch q) -> m (Dynamic t (QueryResult q))
+  tellQueryIncremental :: Incremental (AdditivePatch q) -> m ()
+  askQueryResult :: m (Dynamic (QueryResult q))
+  queryIncremental :: Incremental (AdditivePatch q) -> m (Dynamic (QueryResult q))
 
 instance (Monad m, MonadQuery t q m) => MonadQuery t q (ReaderT r m) where
   tellQueryIncremental = lift . tellQueryIncremental
   askQueryResult = lift askQueryResult
   queryIncremental = lift . queryIncremental
 
-tellQueryDyn :: (Reflex t, MonadQuery t q m) => Dynamic t q -> m ()
+tellQueryDyn :: (MonadQuery t q m) => Dynamic q -> m ()
 tellQueryDyn d = tellQueryIncremental $ unsafeBuildIncremental (sample (current d)) $ attachWith (\old new -> AdditivePatch $ new ~~ old) (current d) (updated d)
 
-queryDyn :: (Reflex t, Monad m, MonadQuery t q m) => Dynamic t q -> m (Dynamic t (QueryResult q))
+queryDyn :: (Monad m, MonadQuery t q m) => Dynamic q -> m (Dynamic (QueryResult q))
 queryDyn q = do
   tellQueryDyn q
   zipDynWith crop q <$> askQueryResult

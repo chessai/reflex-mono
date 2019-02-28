@@ -22,16 +22,16 @@ module Reflex.EventWriter.Base
   , withEventWriterT
   ) where
 
-import Reflex.Adjustable.Class
-import Reflex.Class
+import Reflex
 import Reflex.EventWriter.Class (EventWriter, tellEvent)
 import Reflex.DynamicWriter.Class (MonadDynamicWriter, tellDyn)
-import Reflex.Host.Class
+-- import Reflex.Host.Class
 import Reflex.PerformEvent.Class
 import Reflex.PostBuild.Class
 import Reflex.Query.Class
 import Reflex.Requester.Class
 import Reflex.TriggerEvent.Class
+import Reflex.Patch
 
 import Control.Monad.Exception
 import Control.Monad.Identity
@@ -89,17 +89,17 @@ instance GCompare (TellId w) where
       EQ -> GEQ
       GT -> GGT
 
-data EventWriterState t w = EventWriterState
+data EventWriterState w = EventWriterState
   { _eventWriterState_nextId :: {-# UNPACK #-} !Int -- Always negative (and decreasing over time)
-  , _eventWriterState_told :: ![DSum (TellId w) (Event t)] -- In increasing order
+  , _eventWriterState_told :: ![DSum (TellId w) (Event)] -- In increasing order
   }
 
 -- | A basic implementation of 'EventWriter'.
-newtype EventWriterT t w m a = EventWriterT { unEventWriterT :: StateT (EventWriterState t w) m a }
+newtype EventWriterT w m a = EventWriterT { unEventWriterT :: StateT (EventWriterState w) m a }
   deriving (Functor, Applicative, Monad, MonadFix, MonadIO, MonadException, MonadAsyncException)
 
 -- | Run a 'EventWriterT' action.
-runEventWriterT :: forall t m w a. (Reflex t, Monad m, Semigroup w) => EventWriterT t w m a -> m (a, Event t w)
+runEventWriterT :: forall m w a. (Monad m, Semigroup w) => EventWriterT w m a -> m (a, Event w)
 runEventWriterT (EventWriterT a) = do
   (result, requests) <- runStateT a $ EventWriterState (-1) []
   let combineResults :: DMap (TellId w) Identity -> w
@@ -108,7 +108,7 @@ runEventWriterT (EventWriterT a) = do
         . DMap.foldlWithKey (\vs tid (Identity v) -> withTellIdRefl tid $ v : vs) [] -- This is where we finally reverse the DMap to get things in the correct order
   return (result, fmap combineResults $ merge $ DMap.fromDistinctAscList $ _eventWriterState_told requests) --TODO: We can probably make this fromDistinctAscList more efficient by knowing the length in advance, but this will require exposing internals of DMap; also converting it to use a strict list might help
 
-instance (Reflex t, Monad m, Semigroup w) => EventWriter t w (EventWriterT t w m) where
+instance (Monad m, Semigroup w) => EventWriter w (EventWriterT w m) where
   tellEvent w = EventWriterT $ modify $ \old ->
     let myId = _eventWriterState_nextId old
     in EventWriterState
@@ -116,13 +116,13 @@ instance (Reflex t, Monad m, Semigroup w) => EventWriter t w (EventWriterT t w m
        , _eventWriterState_told = (tellId myId :=> w) : _eventWriterState_told old
        }
 
-instance MonadTrans (EventWriterT t w) where
+instance MonadTrans (EventWriterT w) where
   lift = EventWriterT . lift
 
-instance MonadSample t m => MonadSample t (EventWriterT t w m) where
+instance MonadSample m => MonadSample (EventWriterT w m) where
   sample = lift . sample
 
-instance MonadHold t m => MonadHold t (EventWriterT t w m) where
+instance MonadHold m => MonadHold (EventWriterT w m) where
   {-# INLINABLE hold #-}
   hold v0 = lift . hold v0
   {-# INLINABLE holdDyn #-}
@@ -134,15 +134,15 @@ instance MonadHold t m => MonadHold t (EventWriterT t w m) where
   {-# INLINABLE headE #-}
   headE = lift . headE
 
-instance (Reflex t, Adjustable t m, MonadHold t m, Semigroup w) => Adjustable t (EventWriterT t w m) where
+instance (Adjustable m, MonadHold m, Semigroup w) => Adjustable (EventWriterT w m) where
   runWithReplace = runWithReplaceEventWriterTWith $ \dm0 dm' -> lift $ runWithReplace dm0 dm'
-  traverseIntMapWithKeyWithAdjust = sequenceIntMapWithAdjustEventWriterTWith (\f dm0 dm' -> lift $ traverseIntMapWithKeyWithAdjust f dm0 dm') mergeIntIncremental coincidencePatchIntMap
+  traverseIntMapWithKeyAdjust = sequenceIntMapWithAdjustEventWriterTWith (\f dm0 dm' -> lift $ traverseIntMapWithKeyAdjust f dm0 dm') mergeIntIncremental coincidencePatchIntMap
   traverseDMapWithKeyWithAdjust = sequenceDMapWithAdjustEventWriterTWith (\f dm0 dm' -> lift $ traverseDMapWithKeyWithAdjust f dm0 dm') mapPatchDMap weakenPatchDMapWith mergeMapIncremental coincidencePatchMap
   traverseDMapWithKeyWithAdjustWithMove = sequenceDMapWithAdjustEventWriterTWith (\f dm0 dm' -> lift $ traverseDMapWithKeyWithAdjustWithMove f dm0 dm') mapPatchDMapWithMove weakenPatchDMapWithMoveWith mergeMapIncrementalWithMove coincidencePatchMapWithMove
 
-instance Requester t m => Requester t (EventWriterT t w m) where
-  type Request (EventWriterT t w m) = Request m
-  type Response (EventWriterT t w m) = Response m
+instance Requester t m => Requester t (EventWriterT w m) where
+  type Request (EventWriterT w m) = Request m
+  type Response (EventWriterT w m) = Response m
   requesting = lift . requesting
   requesting_ = lift . requesting_
 
@@ -150,11 +150,11 @@ instance Requester t m => Requester t (EventWriterT t w m) where
 -- 'runWithReplace' for 'EventWriterT'.  This is necessary when the underlying
 -- monad doesn't have a 'Adjustable' instance or to override the default
 -- 'Adjustable' behavior.
-runWithReplaceEventWriterTWith :: forall m t w a b. (Reflex t, MonadHold t m, Semigroup w)
-                               => (forall a' b'. m a' -> Event t (m b') -> EventWriterT t w m (a', Event t b'))
-                               -> EventWriterT t w m a
-                               -> Event t (EventWriterT t w m b)
-                               -> EventWriterT t w m (a, Event t b)
+runWithReplaceEventWriterTWith :: forall m w a b. (MonadHold m, Semigroup w)
+                               => (forall a' b'. m a' -> Event (m b') -> EventWriterT w m (a', Event b'))
+                               -> EventWriterT w m a
+                               -> Event (EventWriterT w m b)
+                               -> EventWriterT w m (a, Event b)
 runWithReplaceEventWriterTWith f a0 a' = do
   (result0, result') <- f (runEventWriterT a0) $ fmapCheap runEventWriterT a'
   tellEvent =<< switchHoldPromptOnly (snd result0) (fmapCheap snd result')
@@ -162,36 +162,35 @@ runWithReplaceEventWriterTWith f a0 a' = do
 
 -- | Like 'runWithReplaceEventWriterTWith', but for 'sequenceIntMapWithAdjust'.
 sequenceIntMapWithAdjustEventWriterTWith
-  :: forall t m p w v v'
-  .  ( Reflex t
-     , MonadHold t m
+  :: forall m p w v v'
+  .  ( MonadHold m
      , Semigroup w
      , Functor p
-     , Patch (p (Event t w))
-     , PatchTarget (p (Event t w)) ~ IntMap (Event t w)
+     , Patch (p (Event w))
+     , PatchTarget (p (Event w)) ~ IntMap (Event w)
      , Patch (p w)
      , PatchTarget (p w) ~ IntMap w
      )
-  => (   (IntMap.Key -> v -> m (Event t w, v'))
+  => (   (IntMap.Key -> v -> m (Event w, v'))
       -> IntMap v
-      -> Event t (p v)
-      -> EventWriterT t w m (IntMap (Event t w, v'), Event t (p (Event t w, v')))
+      -> Event (p v)
+      -> EventWriterT w m (IntMap (Event w, v'), Event (p (Event w, v')))
      )
-  -> (Incremental t (p (Event t w)) -> Event t (PatchTarget (p w)))
-  -> (Event t (p (Event t w)) -> Event t (p w))
-  -> (IntMap.Key -> v -> EventWriterT t w m v')
+  -> (Incremental (p (Event w)) -> Event (PatchTarget (p w)))
+  -> (Event (p (Event w)) -> Event (p w))
+  -> (IntMap.Key -> v -> EventWriterT w m v')
   -> IntMap v
-  -> Event t (p v)
-  -> EventWriterT t w m (IntMap v', Event t (p v'))
+  -> Event (p v)
+  -> EventWriterT w m (IntMap v', Event (p v'))
 sequenceIntMapWithAdjustEventWriterTWith base mergePatchIncremental coincidencePatch f dm0 dm' = do
-  let f' :: IntMap.Key -> v -> m (Event t w, v')
+  let f' :: IntMap.Key -> v -> m (Event w, v')
       f' k v = swap <$> runEventWriterT (f k v)
   (children0, children') <- base f' dm0 dm'
   let result0 = fmap snd children0
       result' = fmapCheap (fmap snd) children'
-      requests0 :: IntMap (Event t w)
+      requests0 :: IntMap (Event w)
       requests0 = fmap fst children0
-      requests' :: Event t (p (Event t w))
+      requests' :: Event (p (Event w))
       requests' = fmapCheap (fmap fst) children'
   e <- switchHoldPromptOnlyIncremental mergePatchIncremental coincidencePatch requests0 requests'
   tellEvent $ fforMaybeCheap e $ \m ->
@@ -202,38 +201,37 @@ sequenceIntMapWithAdjustEventWriterTWith base mergePatchIncremental coincidenceP
 
 -- | Like 'runWithReplaceEventWriterTWith', but for 'sequenceDMapWithAdjust'.
 sequenceDMapWithAdjustEventWriterTWith
-  :: forall t m p p' w k v v'
-  .  ( Reflex t
-     , MonadHold t m
+  :: forall m p p' w k v v'
+  .  ( MonadHold m
      , Semigroup w
-     , Patch (p' (Some k) (Event t w))
-     , PatchTarget (p' (Some k) (Event t w)) ~ Map (Some k) (Event t w)
+     , Patch (p' (Some k) (Event w))
+     , PatchTarget (p' (Some k) (Event w)) ~ Map (Some k) (Event w)
      , GCompare k
      , Patch (p' (Some k) w)
      , PatchTarget (p' (Some k) w) ~ Map (Some k) w
      )
-  => (   (forall a. k a -> v a -> m (Compose ((,) (Event t w)) v' a))
+  => (   (forall a. k a -> v a -> m (Compose ((,) (Event w)) v' a))
       -> DMap k v
-      -> Event t (p k v)
-      -> EventWriterT t w m (DMap k (Compose ((,) (Event t w)) v'), Event t (p k (Compose ((,) (Event t w)) v')))
+      -> Event (p k v)
+      -> EventWriterT w m (DMap k (Compose ((,) (Event w)) v'), Event (p k (Compose ((,) (Event w)) v')))
      )
-  -> ((forall a. Compose ((,) (Event t w)) v' a -> v' a) -> p k (Compose ((,) (Event t w)) v') -> p k v')
-  -> ((forall a. Compose ((,) (Event t w)) v' a -> Event t w) -> p k (Compose ((,) (Event t w)) v') -> p' (Some k) (Event t w))
-  -> (Incremental t (p' (Some k) (Event t w)) -> Event t (PatchTarget (p' (Some k) w)))
-  -> (Event t (p' (Some k) (Event t w)) -> Event t (p' (Some k) w))
-  -> (forall a. k a -> v a -> EventWriterT t w m (v' a))
+  -> ((forall a. Compose ((,) (Event w)) v' a -> v' a) -> p k (Compose ((,) (Event w)) v') -> p k v')
+  -> ((forall a. Compose ((,) (Event w)) v' a -> Event w) -> p k (Compose ((,) (Event w)) v') -> p' (Some k) (Event w))
+  -> (Incremental (p' (Some k) (Event w)) -> Event (PatchTarget (p' (Some k) w)))
+  -> (Event (p' (Some k) (Event w)) -> Event (p' (Some k) w))
+  -> (forall a. k a -> v a -> EventWriterT w m (v' a))
   -> DMap k v
-  -> Event t (p k v)
-  -> EventWriterT t w m (DMap k v', Event t (p k v'))
+  -> Event (p k v)
+  -> EventWriterT w m (DMap k v', Event (p k v'))
 sequenceDMapWithAdjustEventWriterTWith base mapPatch weakenPatchWith mergePatchIncremental coincidencePatch f dm0 dm' = do
-  let f' :: forall a. k a -> v a -> m (Compose ((,) (Event t w)) v' a)
+  let f' :: forall a. k a -> v a -> m (Compose ((,) (Event w)) v' a)
       f' k v = Compose . swap <$> runEventWriterT (f k v)
   (children0, children') <- base f' dm0 dm'
   let result0 = DMap.map (snd . getCompose) children0
       result' = fforCheap children' $ mapPatch $ snd . getCompose
-      requests0 :: Map (Some k) (Event t w)
+      requests0 :: Map (Some k) (Event w)
       requests0 = weakenDMapWith (fst . getCompose) children0
-      requests' :: Event t (p' (Some k) (Event t w))
+      requests' :: Event (p' (Some k) (Event w))
       requests' = fforCheap children' $ weakenPatchWith $ fst . getCompose
   e <- switchHoldPromptOnlyIncremental mergePatchIncremental coincidencePatch requests0 requests'
   tellEvent $ fforMaybeCheap e $ \m ->
@@ -242,54 +240,54 @@ sequenceDMapWithAdjustEventWriterTWith base mapPatch weakenPatchWith mergePatchI
       h : t -> Just $ sconcat $ h :| t
   return (result0, result')
 
-instance PerformEvent t m => PerformEvent t (EventWriterT t w m) where
-  type Performable (EventWriterT t w m) = Performable m
+instance PerformEvent m => PerformEvent (EventWriterT w m) where
+  type Performable (EventWriterT w m) = Performable m
   performEvent_ = lift . performEvent_
   performEvent = lift . performEvent
 
-instance PostBuild t m => PostBuild t (EventWriterT t w m) where
+instance PostBuild m => PostBuild (EventWriterT w m) where
   getPostBuild = lift getPostBuild
 
-instance TriggerEvent t m => TriggerEvent t (EventWriterT t w m) where
+instance TriggerEvent m => TriggerEvent (EventWriterT w m) where
   newTriggerEvent = lift newTriggerEvent
   newTriggerEventWithOnComplete = lift newTriggerEventWithOnComplete
   newEventWithLazyTriggerWithOnComplete = lift . newEventWithLazyTriggerWithOnComplete
 
-instance MonadReader r m => MonadReader r (EventWriterT t w m) where
+instance MonadReader r m => MonadReader r (EventWriterT w m) where
   ask = lift ask
   local f (EventWriterT a) = EventWriterT $ mapStateT (local f) a
   reader = lift . reader
 
-instance MonadRef m => MonadRef (EventWriterT t w m) where
-  type Ref (EventWriterT t w m) = Ref m
+instance MonadRef m => MonadRef (EventWriterT w m) where
+  type Ref (EventWriterT w m) = Ref m
   newRef = lift . newRef
   readRef = lift . readRef
   writeRef r = lift . writeRef r
 
-instance MonadAtomicRef m => MonadAtomicRef (EventWriterT t w m) where
+instance MonadAtomicRef m => MonadAtomicRef (EventWriterT w m) where
   atomicModifyRef r = lift . atomicModifyRef r
 
-instance MonadReflexCreateTrigger t m => MonadReflexCreateTrigger t (EventWriterT t w m) where
+instance MonadReflexCreateTrigger m => MonadReflexCreateTrigger (EventWriterT w m) where
   newEventWithTrigger = lift . newEventWithTrigger
   newFanEventWithTrigger f = lift $ newFanEventWithTrigger f
 
-instance (MonadQuery t q m, Monad m) => MonadQuery t q (EventWriterT t w m) where
+instance (MonadQuery t q m, Monad m) => MonadQuery t q (EventWriterT w m) where
   tellQueryIncremental = lift . tellQueryIncremental
   askQueryResult = lift askQueryResult
   queryIncremental = lift . queryIncremental
 
-instance MonadDynamicWriter t w m => MonadDynamicWriter t w (EventWriterT t v m) where
+instance MonadDynamicWriter w m => MonadDynamicWriter w (EventWriterT v m) where
   tellDyn = lift . tellDyn
 
-instance PrimMonad m => PrimMonad (EventWriterT t w m) where
-  type PrimState (EventWriterT t w m) = PrimState m
+instance PrimMonad m => PrimMonad (EventWriterT w m) where
+  type PrimState (EventWriterT w m) = PrimState m
   primitive = lift . primitive
 
 -- | Map a function over the output of a 'EventWriterT'.
-withEventWriterT :: (Semigroup w, Semigroup w', Reflex t, MonadHold t m)
+withEventWriterT :: (Semigroup w, Semigroup w', MonadHold m)
                  => (w -> w')
-                 -> EventWriterT t w m a
-                 -> EventWriterT t w' m a
+                 -> EventWriterT w m a
+                 -> EventWriterT w' m a
 withEventWriterT f ew = do
   (r, e) <- lift $ do
     (r, e) <- runEventWriterT ew
@@ -301,6 +299,6 @@ withEventWriterT f ew = do
 -- | Change the monad underlying an EventWriterT
 mapEventWriterT
   :: (forall x. m x -> n x)
-  -> EventWriterT t w m a
-  -> EventWriterT t w n a
+  -> EventWriterT w m a
+  -> EventWriterT w n a
 mapEventWriterT f (EventWriterT a) = EventWriterT $ mapStateT f a

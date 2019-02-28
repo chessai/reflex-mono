@@ -98,6 +98,8 @@ library
     Reflex.Patch.MapWithMove
     Reflex.PostBuild.Base
     Reflex.PostBuild.Class
+    Reflex.EventWriter.Base
+    Reflex.EventWriter.Class
   ghc-options:
     -Wall
     -O2

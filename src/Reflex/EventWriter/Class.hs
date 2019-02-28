@@ -14,14 +14,14 @@ module Reflex.EventWriter.Class
 import Control.Monad.Reader (ReaderT, lift)
 import Data.Semigroup (Semigroup)
 
-import Reflex.Class (Event)
+import Reflex (Event)
 
 
 -- | 'EventWriter' efficiently collects 'Event' values using 'tellEvent'
 -- and combines them via 'Semigroup' to provide an 'Event' result.
-class (Monad m, Semigroup w) => EventWriter t w m | m -> t w where
-  tellEvent :: Event t w -> m ()
+class (Monad m, Semigroup w) => EventWriter w m where
+  tellEvent :: Event w -> m ()
 
 
-instance EventWriter t w m => EventWriter t w (ReaderT r m) where
+instance EventWriter w m => EventWriter w (ReaderT r m) where
   tellEvent = lift . tellEvent
