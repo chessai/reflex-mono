@@ -96,6 +96,8 @@ library
     Reflex.Patch.IntMap
     Reflex.Patch.Map
     Reflex.Patch.MapWithMove
+    Reflex.PostBuild.Base
+    Reflex.PostBuild.Class
   ghc-options:
     -Wall
     -O2

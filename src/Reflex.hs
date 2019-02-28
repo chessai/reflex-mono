@@ -197,6 +197,10 @@ module Reflex
   , networkView
   , networkHold
   , untilReady
+  , MonadSample(..)
+  , MonadHold(..)
+  , fmapCheap
+  , ffor
   ) where
 
 import Control.Applicative (liftA2)
@@ -3472,7 +3476,7 @@ untilReady a b = do
   postBuild <- getPostBuild
   runWithReplace a $ b <$ postBuild
 
-newtype PostBuildT m a = PostBuildT { unPostBuild :: ReaderT (Event ()) m a }
+newtype PostBuildT m a = PostBuildT { unPostBuildT :: ReaderT (Event ()) m a }
   deriving (Functor,Applicative,Monad,MonadFix,MonadIO,MonadTrans,MonadException,MonadAsyncException)
 
 runPostBuildT :: PostBuildT m a -> Event () -> m a

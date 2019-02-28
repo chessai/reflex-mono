@@ -16,7 +16,7 @@ module Reflex.PostBuild.Class
   ( PostBuild (..)
   ) where
 
-import Reflex.Class
+import Reflex
 
 import Control.Monad.Reader
 import Control.Monad.State
@@ -28,15 +28,15 @@ import qualified Control.Monad.State.Strict as Strict
 -- 'Behavior's and 'Dynamic's to be safely sampled, regardless of where they
 -- were created, when the post-build 'Event' fires.  The post-build 'Event' will
 -- fire exactly once for an given action.
-class (Reflex t, Monad m) => PostBuild t m | m -> t where
+class (Monad m) => PostBuild m where
   -- | Retrieve the post-build 'Event' for this action.
-  getPostBuild :: m (Event t ())
+  getPostBuild :: m (Event ())
 
-instance PostBuild t m => PostBuild t (ReaderT r m) where
+instance PostBuild m => PostBuild (ReaderT r m) where
   getPostBuild = lift getPostBuild
 
-instance PostBuild t m => PostBuild t (StateT s m) where
+instance PostBuild m => PostBuild (StateT s m) where
   getPostBuild = lift getPostBuild
 
-instance PostBuild t m => PostBuild t (Strict.StateT s m) where
+instance PostBuild m => PostBuild (Strict.StateT s m) where
   getPostBuild = lift getPostBuild

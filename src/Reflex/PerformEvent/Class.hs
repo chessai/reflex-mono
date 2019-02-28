@@ -19,14 +19,14 @@ module Reflex.PerformEvent.Class
   , performEventAsync
   ) where
 
-import Reflex.Class
+import Reflex
 import Reflex.TriggerEvent.Class
 
 import Control.Monad.Reader
 
 -- | 'PerformEvent' represents actions that can trigger other actions based on
 -- 'Event's.
-class (Reflex t, Monad (Performable m), Monad m) => PerformEvent t m | m -> t where
+class (Monad (Performable m), Monad m) => PerformEvent m where
   -- | The type of action to be triggered; this is often not the same type as
   -- the triggering action.
   type Performable m :: * -> *
@@ -34,10 +34,10 @@ class (Reflex t, Monad (Performable m), Monad m) => PerformEvent t m | m -> t wh
   -- fires.  Return the result in another 'Event'.  Note that the output 'Event'
   -- will generally occur later than the input 'Event', since most 'Performable'
   -- actions cannot be performed during 'Event' propagation.
-  performEvent :: Event t (Performable m a) -> m (Event t a)
+  performEvent :: Event (Performable m a) -> m (Event a)
   -- | Like 'performEvent', but do not return the result.  May have slightly
   -- better performance.
-  performEvent_ :: Event t (Performable m ()) -> m ()
+  performEvent_ :: Event (Performable m ()) -> m ()
 
 -- | Like 'performEvent', but the resulting 'Event' occurs only when the
 -- callback (@a -> IO ()@) is called, not when the included action finishes.
@@ -48,13 +48,13 @@ class (Reflex t, Monad (Performable m), Monad m) => PerformEvent t m | m -> t wh
 -- (which fully implements concurrency even though JavaScript does not have
 -- built in concurrency).
 {-# INLINABLE performEventAsync #-}
-performEventAsync :: (TriggerEvent t m, PerformEvent t m) => Event t ((a -> IO ()) -> Performable m ()) -> m (Event t a)
+performEventAsync :: (TriggerEvent m, PerformEvent m) => Event ((a -> IO ()) -> Performable m ()) -> m (Event a)
 performEventAsync e = do
   (eOut, triggerEOut) <- newTriggerEvent
   performEvent_ $ fmap ($ triggerEOut) e
   return eOut
 
-instance PerformEvent t m => PerformEvent t (ReaderT r m) where
+instance PerformEvent m => PerformEvent (ReaderT r m) where
   type Performable (ReaderT r m) = ReaderT r (Performable m)
   performEvent_ e = do
     r <- ask
