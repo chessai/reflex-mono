@@ -19,7 +19,7 @@ import Reflex (Event)
 
 -- | 'EventWriter' efficiently collects 'Event' values using 'tellEvent'
 -- and combines them via 'Semigroup' to provide an 'Event' result.
-class (Monad m, Semigroup w) => EventWriter w m where
+class (Monad m, Semigroup w) => EventWriter w m | m -> w where
   tellEvent :: Event w -> m ()
 
 
